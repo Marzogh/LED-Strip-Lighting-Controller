@@ -1,4 +1,4 @@
-/* LED strip lighting controller v 0.0.2
+/* LED strip lighting controller v 0.0.3
    Copyright (C) 2016 by Prajwal Bhattaram
    Modified by Prajwal Bhattaram - 29/08/2016
 
@@ -30,7 +30,7 @@
 #define FET_PORT PORTD
 #define BUTTON_DDR DDRD
 #define FET_DDR DDRD
-#define MINLIGHT 175
+#define MINLIGHT 50
 #define MAXLIGHT 255
 #define _LEFT 5   // This is the pin number that the MOSFET for the left strip is connected to
 #define _RIGHT 6  // This is the pin number that the MOSFET for the right strip is connected to
@@ -87,7 +87,7 @@ void buttonRight() {
 
 uint8_t lightLevel() {
   //uint16_t lightLvl = analogRead(LDR);
-  uint8_t lightLvl = constrain(map(analogRead(LDR), 0, 1023, MINLIGHT, MAXLIGHT), MINLIGHT, MAXLIGHT);
+  uint8_t lightLvl = constrain(map(analogRead(LDR), 0, 255, MINLIGHT, MAXLIGHT), MINLIGHT, MAXLIGHT);
   //lightLvl = constrain(lightLvl, MINLIGHT, MAXLIGHT);
 #ifdef DEBUG
   debug.print("Analog read LDR: ");
@@ -168,7 +168,7 @@ void loop() {
         buttonPush = 0;
         sei();
 #ifdef DEBUG
-        debug.print("Interrupts turned on");
+        debug.println("Interrupts turned on");
 #endif
         break;
 
@@ -182,7 +182,7 @@ void loop() {
         buttonPush = 0;
         sei();
 #ifdef DEBUG
-        debug.print("Interrupts turned on");
+        debug.println("Interrupts turned on");
 #endif
         break;
 
@@ -204,6 +204,10 @@ void loop() {
   }
 
   else {
+    #ifdef DEBUG
+    debug.println("Going to sleep.....");
+    delay(30);
+    #endif
     LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
   }
 }
