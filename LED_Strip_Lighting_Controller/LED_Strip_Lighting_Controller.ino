@@ -1,11 +1,12 @@
-/* LED strip lighting controller v 0.0.3
+/* LED strip lighting controller v 0.0.4
    Copyright (C) 2016 by Prajwal Bhattaram
-   Modified by Prajwal Bhattaram - 29/08/2016
+   Created by Prajwal Bhattaram - 29/08/2016
+   Created by Prajwal Bhattaram - 02/06/2017
 
-   This file is part of the LED Strip Lighting Controller. This code is for
+   This file is part of the LED Strip Lighting Controller repository. This code is for
    controlling LED strips for use as home lighting. This version of the
    code takes user input from a copper tape based capacitive touch button (refer to
-   schematics & BOM) and turms on or off an LED strip connected through a MOSFET. The
+   schematics & BOM) and turns on or off an LED strip connected through a MOSFET. The
    brightness is automatically set through an LDR or a phototransistor
 
    This code is free software: you can redistribute it and/or modify
@@ -25,11 +26,15 @@
 
 #include <LowPower.h>
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ (Defines)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-//#define DEBUG
+//#define DEBUG   // Only uncomment this if you need to debug
 #define BUTTON_PORT PORTD
 #define FET_PORT PORTD
 #define BUTTON_DDR DDRD
 #define FET_DDR DDRD
+#define BUTTONPIN PIND
+#define BUTTONLEFT PD2
+#define BUTTONRIGHT PD3
+#define DEBOUNCE_TIME 250000    // In microseconds
 #define MINLIGHT 50
 #define MAXLIGHT 255
 #define _LEFT 5   // This is the pin number that the MOSFET for the left strip is connected to
@@ -63,15 +68,35 @@ _state lightStatus;
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ (Functions)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+//                                                     Debounce code for interrupt function                                                     //
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+
+bool debounce(uint8_t inputreg, uint8_t inputpin) {
+  if (bit_is_clear(inputreg, inputpin)) {
+    _delay_us(DEBOUNCE_TIME);
+    if (bit_is_clear(inputreg, inputpin)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+//                                      Interrupt functions: These functions run when the interrupt is called                                   //
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+
 void buttonLeft() {
   cli();
 #ifdef DEBUG
   debug.println("Interrupt 0 turned off");
 #endif
-  buttonPush = _LEFT;
+  if (debounce(BUTTONPIN, BUTTONLEFT)) {
+    buttonPush = _LEFT;
 #ifdef DEBUG
-  debug.println("Left button pushed");
+    debug.println("Left button pushed");
 #endif
+  }
 }
 
 void buttonRight() {
@@ -79,11 +104,17 @@ void buttonRight() {
 #ifdef DEBUG
   debug.println("Interrupt 1 turned off");
 #endif
-  buttonPush = _RIGHT;
+  if (debounce(BUTTONPIN, BUTTONRIGHT)) {
+    buttonPush = _RIGHT;
 #ifdef DEBUG
-  debug.println("Right button pushed");
+    debug.println("Right button pushed");
 #endif
+  }
 }
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+//                                                    Sets the light level based on the LDR reading                                             //
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
 uint8_t lightLevel() {
   //uint16_t lightLvl = analogRead(LDR);
@@ -97,6 +128,10 @@ uint8_t lightLevel() {
 #endif
   return lightLvl;
 }
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+//                                                              Turns on the light strip                                                        //
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
 void lightsOn(uint8_t _lightstrip, bool _fade) {
 #ifdef DEBUG
@@ -115,6 +150,10 @@ void lightsOn(uint8_t _lightstrip, bool _fade) {
   analogWrite(_lightstrip, _lightLevel);
   (_lightstrip == _LEFT) ? (lightStatus.left = true) : (lightStatus.right = true);
 }
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+//                                                              Turns off the light strip                                                       //
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
 void lightsOff(uint8_t _lightstrip) {
 #ifdef DEBUG
@@ -138,10 +177,10 @@ void setup() {
   debug.begin(115200);
   debug.println("Initialising sensor");
 #endif
-  BUTTON_DDR &= ~(buttonPins);
-  BUTTON_PORT |= buttonPins;
-  attachInterrupt(digitalPinToInterrupt(buttonL), buttonLeft, LOW);
-  attachInterrupt(digitalPinToInterrupt(buttonR), buttonRight, LOW);
+  BUTTON_DDR &= ~(buttonPins); // Sets the button pins to input
+  BUTTON_PORT |= buttonPins; // Enables the pull-up resistor
+  attachInterrupt(digitalPinToInterrupt(buttonL), buttonLeft, LOW);   // Attach interrupt to left button
+  attachInterrupt(digitalPinToInterrupt(buttonR), buttonRight, LOW);  // Attach interrupt to right button
 
   currentButton.left = false;
   currentButton.right = false;
@@ -191,24 +230,25 @@ void loop() {
         break;
     }
   }
-  if (lightStatus.left) {
-    if (lightLevel() != _lightLevel) {
+
+  if ((lightStatus.left || lightStatus.right) && (lightLevel() != _lightLevel)) {
+    if (lightStatus.left) {
       lightsOn(_LEFT, NOFADE);
     }
-  }
-
-  else if (lightStatus.right) {
-    if (lightLevel() != _lightLevel) {
+    else if (lightStatus.right) {
       lightsOn(_RIGHT, NOFADE);
     }
   }
 
+  /*else if (lightStatus.right && (lightLevel() != _lightLevel)) {
+    lightsOn(_RIGHT, NOFADE);
+    }*/
+
   else {
-    #ifdef DEBUG
+#ifdef DEBUG
     debug.println("Going to sleep.....");
-    delay(30);
-    #endif
+    _delay_ms(30);
+#endif
     LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
   }
 }
-
