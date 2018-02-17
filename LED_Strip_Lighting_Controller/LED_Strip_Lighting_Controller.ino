@@ -1,12 +1,13 @@
-/* LED strip lighting controller v 0.0.4
+/* LED strip lighting controller v 0.0.5
    Copyright (C) 2016 by Prajwal Bhattaram
    Created by Prajwal Bhattaram - 29/08/2016
-   Created by Prajwal Bhattaram - 02/06/2017
+   Updated by Prajwal Bhattaram - 17/02/2018
 
    This file is part of the LED Strip Lighting Controller repository. This code is for
    controlling LED strips for use as home lighting. This version of the
-   code takes user input from a copper tape based capacitive touch button (refer to
-   schematics & BOM) and turns on or off an LED strip connected through a MOSFET. The
+   code takes user input from a copper tape based membrane LED keypad from Adafruit 
+   - https://www.adafruit.com/product/1333 - (refer to schematics
+   & BOM) and turns on or off an LED strip connected through a MOSFET. The
    brightness is automatically set through an LDR or a phototransistor
 
    This code is free software: you can redistribute it and/or modify
@@ -34,37 +35,46 @@
 #define BUTTONPIN PIND
 #define BUTTONLEFT PD2
 #define BUTTONRIGHT PD3
-#define DEBOUNCE_TIME 250000    // In microseconds
+#define BUTTONLLED PD4
+#define BUTTONRLED PD7
+#define DEBOUNCE_TIME 25000    // In microseconds
 #define MINLIGHT 50
 #define MAXLIGHT 255
 #define _LEFT 5   // This is the pin number that the MOSFET for the left strip is connected to
 #define _RIGHT 6  // This is the pin number that the MOSFET for the right strip is connected to
+#define _BOTH (_LEFT + _RIGHT)
+#define _NONE 0
 #define FADE true
 #define NOFADE false
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ (Pins)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
 const uint8_t LDR = A0;
-const uint8_t buttonL = 2;
-const uint8_t buttonR = 3;
-//const uint8_t LFET = 5;
-//const uint8_t RFET = 6;
-const uint8_t buttonPins = 0x06;
-const uint8_t fetPins = 0x60;
+const uint8_t buttonPins = 0b00001100;
+const uint8_t fetPins = 0b01100000;
+const uint8_t rButtonLED = 0b10000000; // This is the pin number that the R button's LED is connected to
+const uint8_t lButtonLED = 0b00010000;  // This is the pin number that the L button's LED is connected to
+const uint8_t buttonLEDPins = 0b10010000;
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ (Function defines)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+
+#define TURNOFFLIGHTS FET_PORT &= ~(fetPins)
+#define TURNONBUTTONLEDS BUTTON_PORT |= buttonLEDPins
+#define TURNOFFBUTTONLEDS BUTTON_PORT &= ~(buttonLEDPins)
+#define lButtonLEDOff BUTTON_PORT &= ~(lButtonLED)
+#define lButtonLEDOn BUTTON_PORT |= lButtonLED
+#define rButtonLEDOff BUTTON_PORT &= ~(rButtonLED)
+#define rButtonLEDOn BUTTON_PORT |= rButtonLED
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ (Variables)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-
-uint8_t buttonPush, _lightLevel;
+uint8_t prevLightLevel;
 struct _state {
   uint8_t left;
   uint8_t right;
 };
 _state currentButton;
-_state lightStatus;
-// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ (Debug control)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-#ifdef DEBUG
-#define debug Serial
-#endif
+_state prevButton;
+int8_t lightStatus;
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ (Functions)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
@@ -88,28 +98,20 @@ bool debounce(uint8_t inputreg, uint8_t inputpin) {
 
 void buttonLeft() {
   cli();
-#ifdef DEBUG
-  debug.println("Interrupt 0 turned off");
-#endif
   if (debounce(BUTTONPIN, BUTTONLEFT)) {
-    buttonPush = _LEFT;
-#ifdef DEBUG
-    debug.println("Left button pushed");
-#endif
+    currentButton.left = !currentButton.left;
   }
+  //Serial.println("Left button clicked ");
+  sei();
 }
 
 void buttonRight() {
   cli();
-#ifdef DEBUG
-  debug.println("Interrupt 1 turned off");
-#endif
   if (debounce(BUTTONPIN, BUTTONRIGHT)) {
-    buttonPush = _RIGHT;
-#ifdef DEBUG
-    debug.println("Right button pushed");
-#endif
+    currentButton.right = !currentButton.right;
   }
+  //Serial.println("Right button clicked ");
+  sei();
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
@@ -117,15 +119,7 @@ void buttonRight() {
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
 uint8_t lightLevel() {
-  //uint16_t lightLvl = analogRead(LDR);
   uint8_t lightLvl = constrain(map(analogRead(LDR), 0, 255, MINLIGHT, MAXLIGHT), MINLIGHT, MAXLIGHT);
-  //lightLvl = constrain(lightLvl, MINLIGHT, MAXLIGHT);
-#ifdef DEBUG
-  debug.print("Analog read LDR: ");
-  debug.println(analogRead(LDR));
-  debug.print("Light level set to: ");
-  debug.println(lightLvl);
-#endif
   return lightLvl;
 }
 
@@ -133,122 +127,177 @@ uint8_t lightLevel() {
 //                                                              Turns on the light strip                                                        //
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
-void lightsOn(uint8_t _lightstrip, bool _fade) {
-#ifdef DEBUG
-  debug.print("Turning on ");
-  (_lightstrip == _LEFT) ? (debug.print("left")) : (_lightstrip == _RIGHT) ? (debug.print("right")) : (debug.print("unknown"));
-  debug.println(" light strip");
-#endif
+void lightsOn(uint8_t lightStrip, bool _fade) {
 
-  _lightLevel = lightLevel();
-  if (_fade) {
-    for (uint8_t i = 0; i < _lightLevel; i++) {
-      analogWrite(_lightstrip, i);
-      _delay_ms(20);
-    }
+  if (lightStatus == lightStrip) {
+    lightStatus = lightStrip;
   }
-  analogWrite(_lightstrip, _lightLevel);
-  (_lightstrip == _LEFT) ? (lightStatus.left = true) : (lightStatus.right = true);
+  else {
+    lightStatus += lightStrip;
+  }
+
+  prevLightLevel = lightLevel();
+  
+  if (lightStrip == _LEFT) {
+      lButtonLEDOff;
+    }
+    else if (lightStrip == _RIGHT) {
+      rButtonLEDOff;
+    }
+
+  if ((lightStrip == _LEFT) || (lightStrip == _RIGHT)) {
+    if (lightStatus != _BOTH) {
+      if (_fade) {
+        for (uint8_t i = 0; i < prevLightLevel; i++) {
+          analogWrite(lightStrip, i);
+          _delay_ms(20);
+        }
+      }
+      else {
+        analogWrite(lightStrip, prevLightLevel);
+      }
+    }
+    else if (lightStatus == _BOTH) {
+      if (_fade) {
+        for (uint8_t i = 0; i < prevLightLevel; i++) {
+          analogWrite(lightStrip, i);
+          analogWrite((lightStatus - lightStrip), prevLightLevel);
+          _delay_ms(20);
+        }
+      }
+      else {
+        analogWrite(lightStrip, prevLightLevel);
+        analogWrite((lightStatus - lightStrip), prevLightLevel);
+      }
+    }
+    lightStrip = lightStatus;
+  }
+  if (lightStrip == _BOTH) {
+    TURNOFFBUTTONLEDS;
+    analogWrite(_LEFT, prevLightLevel);
+    analogWrite(_RIGHT, prevLightLevel);
+  }
+  
+  //Serial.print("Lights on. LightStatus: ");
+  //Serial.print(lightStatus);
+  //Serial.print(", lightStrip: ");
+  //Serial.println(lightStrip);
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 //                                                              Turns off the light strip                                                       //
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
-void lightsOff(uint8_t _lightstrip) {
-#ifdef DEBUG
-  debug.print("Turning off ");
-  (_lightstrip == _LEFT) ? (debug.print("left")) : (_lightstrip == _RIGHT) ? (debug.print("right")) : (debug.print("unknown"));
-  debug.println(" light strip");
-#endif
+void lightsOff(uint8_t lightStrip) {
 
-  for (uint8_t i = _lightLevel; i > 0; i--) {
-    analogWrite(_lightstrip, i);
-    _delay_ms(20);
+  switch (lightStatus) {
+
+    case _BOTH:
+      lightStatus -= lightStrip;
+      if (lightStatus == _LEFT) {
+        rButtonLEDOn;
+        for (uint8_t i = prevLightLevel; i <= 1; i--) {
+          analogWrite(_RIGHT, i);
+          _delay_ms(50);
+        }
+        digitalWrite(_RIGHT, LOW);
+      }
+      else if (lightStatus == _RIGHT) {
+        lButtonLEDOn;
+        for (uint8_t i = prevLightLevel; i <= 1; i--) {
+          analogWrite(_LEFT, i);
+          _delay_ms(50);
+        }
+        digitalWrite(_LEFT, LOW);
+      }
+      break;
+
+    case _NONE:
+      lightStatus = _BOTH;
+      break;
+
+    default:
+      TURNONBUTTONLEDS;
+      lightStatus = _NONE; for (uint8_t i = prevLightLevel; i <= 1; i--) {
+        analogWrite(_LEFT, i);
+        analogWrite(_RIGHT, i);
+        _delay_ms(50);
+      }
+      digitalWrite(_LEFT, LOW);
+      digitalWrite(_RIGHT, LOW);
+      break;
   }
-  digitalWrite(_lightstrip, LOW);
-  (_lightstrip == _LEFT) ? (lightStatus.left = false) : (lightStatus.right = false);
+  //Serial.print("Lights off. LightStatus: ");
+  //Serial.print(lightStatus);
+  //Serial.print(", lightStrip: ");
+  //Serial.println(lightStrip);
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ (Arduino Code)~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
 void setup() {
-#ifdef DEBUG
-  debug.begin(115200);
-  debug.println("Initialising sensor");
-#endif
+  //Serial.begin(115200);
+  delay(1000);
   BUTTON_DDR &= ~(buttonPins); // Sets the button pins to input
   BUTTON_PORT |= buttonPins; // Enables the pull-up resistor
-  attachInterrupt(digitalPinToInterrupt(buttonL), buttonLeft, LOW);   // Attach interrupt to left button
-  attachInterrupt(digitalPinToInterrupt(buttonR), buttonRight, LOW);  // Attach interrupt to right button
-
+  BUTTON_DDR |= buttonLEDPins; // Sets button LED pins to output
+  TURNONBUTTONLEDS; // Turns on the buttons' built-in LEDs to enable easy use
+  FET_DDR |= fetPins; //Sets MOSFET pins to output
+  TURNOFFLIGHTS; // Turns off MOSFET pins
   currentButton.left = false;
   currentButton.right = false;
-  lightStatus.left = false;
-  lightStatus.right = false;
+  lightStatus = _NONE;
 
-  FET_DDR |= fetPins;
-  FET_PORT &= ~(fetPins);
+  attachInterrupt(digitalPinToInterrupt(BUTTONLEFT), buttonLeft, LOW);   // Attach interrupt to left button
+  attachInterrupt(digitalPinToInterrupt(BUTTONRIGHT), buttonRight, LOW);  // Attach interrupt to right button
 }
 
 void loop() {
-  uint8_t _status;
-  uint32_t _time;
-
-  if (buttonPush) {
-    switch (buttonPush) {
-      case _LEFT:
-        currentButton.left = !currentButton.left;
-#ifdef DEBUG
-        debug.print("Left button: ");
-        (currentButton.left) ? (debug.println("on")) : (debug.println("off"));
-#endif
-        (currentButton.left) ? (lightsOn(_LEFT, FADE)) : (lightsOff(_LEFT));
-        buttonPush = 0;
-        sei();
-#ifdef DEBUG
-        debug.println("Interrupts turned on");
-#endif
-        break;
-
-      case _RIGHT:
-        currentButton.right = !currentButton.right;
-#ifdef DEBUG
-        debug.print("Right button: ");
-        (currentButton.right) ? (debug.println("on")) : (debug.println("off"));
-#endif
-        (currentButton.right) ? (lightsOn(_RIGHT, FADE)) : (lightsOff(_RIGHT));
-        buttonPush = 0;
-        sei();
-#ifdef DEBUG
-        debug.println("Interrupts turned on");
-#endif
-        break;
-
-      default:
-        buttonPush = 0;
-        break;
+  if (prevButton.left != currentButton.left) {
+  //Serial.println("Left button changed ");
+    if (( lightStatus == _NONE) || (lightStatus == _RIGHT)) {
+      (lightsOn(_LEFT, FADE));
     }
+    else {
+      (lightsOff(_LEFT));
+    }
+    prevButton.left = currentButton.left;
   }
 
-  if ((lightStatus.left || lightStatus.right) && (lightLevel() != _lightLevel)) {
-    if (lightStatus.left) {
+  if (prevButton.right != currentButton.right) {
+  //Serial.println("Right button changed ");
+    if ((lightStatus == _RIGHT) || (lightStatus == _BOTH)) {
+      (lightsOff(_RIGHT));
+    }
+
+    else if ((lightStatus == _NONE) || (lightStatus == _LEFT)) {
+      (lightsOn(_RIGHT, FADE));
+    }
+    prevButton.right = currentButton.right;
+  }
+
+  switch (lightStatus) {
+    case _LEFT:
       lightsOn(_LEFT, NOFADE);
-    }
-    else if (lightStatus.right) {
+      break;
+
+    case _RIGHT:
       lightsOn(_RIGHT, NOFADE);
-    }
+      break;
+
+    case _BOTH:
+      lightsOn(_BOTH, NOFADE);
+      break;
+
+    case _NONE:
+      lightsOn(_NONE, NOFADE);
+      break;
   }
 
-  /*else if (lightStatus.right && (lightLevel() != _lightLevel)) {
-    lightsOn(_RIGHT, NOFADE);
-    }*/
-
-  else {
-#ifdef DEBUG
-    debug.println("Going to sleep.....");
-    _delay_ms(30);
-#endif
-    LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
+  if (lightStatus == _NONE) {
+    if ((prevButton.left == currentButton.left) || (prevButton.right == currentButton.right)) {
+      
+      LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
+    }
   }
 }
